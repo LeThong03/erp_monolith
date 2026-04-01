@@ -27,6 +27,7 @@ class Ingredient(Base):
         Numeric(10, 3), default=0.0, server_default="0", nullable=False
     )
     par_level: Mapped[Optional[float]] = mapped_column(Numeric(10, 3), nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True, server_default="true", nullable=False)
 
 
 class StockMovement(Base):
