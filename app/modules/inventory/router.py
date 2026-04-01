@@ -19,7 +19,7 @@ router = APIRouter(prefix="/inventory", tags=["Inventory"])
 
 
 def _get_ingredient_or_404(id: int, db: Session) -> Ingredient:
-    ing = db.query(Ingredient).filter(Ingredient.id == id).first()
+    ing = db.query(Ingredient).filter(Ingredient.id == id, Ingredient.is_active.is_(True)).first()
     if not ing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ingredient not found")
     return ing
@@ -37,7 +37,7 @@ def create_ingredient(payload: IngredientCreate, db: Session = Depends(get_db)):
         unit=payload.unit.strip(),
         name_vn=payload.name_vn.strip() if payload.name_vn else None,
         category=payload.category,
-        par_level=payload.par_level,
+        par_level=payload.reorder_level,
     )
     db.add(ing)
     db.commit()
@@ -51,7 +51,32 @@ def create_ingredient(payload: IngredientCreate, db: Session = Depends(get_db)):
     dependencies=[Depends(get_current_user)],
 )
 def list_ingredients(db: Session = Depends(get_db)):
-    return db.query(Ingredient).order_by(Ingredient.id.asc()).all()
+    return db.query(Ingredient).filter(Ingredient.is_active.is_(True)).order_by(Ingredient.id.asc()).all()
+
+
+@router.delete(
+    "/ingredients/{id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_role(UserRole.admin, UserRole.manager))],
+)
+def delete_ingredient(id: int, db: Session = Depends(get_db)):
+    ing = _get_ingredient_or_404(id, db)
+    ing.is_active = False
+    db.commit()
+
+
+@router.put(
+    "/ingredients/{id}",
+    response_model=IngredientOut,
+    dependencies=[Depends(require_role(UserRole.admin, UserRole.manager))],
+)
+@router.get(
+    "/ingredients/{id}",
+    response_model=IngredientOut,
+    dependencies=[Depends(get_current_user)],
+)
+def get_ingredient(id: int, db: Session = Depends(get_db)):
+    return _get_ingredient_or_404(id, db)
 
 
 @router.patch(
@@ -61,7 +86,10 @@ def list_ingredients(db: Session = Depends(get_db)):
 )
 def update_ingredient(id: int, payload: IngredientUpdate, db: Session = Depends(get_db)):
     ing = _get_ingredient_or_404(id, db)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "reorder_level" in data:
+        data["par_level"] = data.pop("reorder_level")
+    for field, value in data.items():
         setattr(ing, field, value)
     db.commit()
     db.refresh(ing)
