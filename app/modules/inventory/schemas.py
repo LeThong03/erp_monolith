@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.inventory.models import MovementType
 
@@ -11,7 +11,7 @@ class IngredientCreate(BaseModel):
     unit: str
     name_vn: Optional[str] = None
     category: Optional[str] = None
-    par_level: Optional[float] = None
+    reorder_level: Optional[float] = None
 
 
 class IngredientUpdate(BaseModel):
@@ -19,7 +19,7 @@ class IngredientUpdate(BaseModel):
     unit: Optional[str] = None
     name_vn: Optional[str] = None
     category: Optional[str] = None
-    par_level: Optional[float] = None
+    reorder_level: Optional[float] = None
 
 
 class IngredientOut(BaseModel):
@@ -30,8 +30,9 @@ class IngredientOut(BaseModel):
     unit: str
     name_vn: Optional[str]
     category: Optional[str]
-    stock_qty: float
-    par_level: Optional[float]
+    quantity_in_stock: float = Field(validation_alias="stock_qty")
+    reorder_level: Optional[float] = Field(validation_alias="par_level")
+    is_active: bool
 
 
 class StockAdjust(BaseModel):

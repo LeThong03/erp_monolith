@@ -58,6 +58,19 @@ class POOut(BaseModel):
     items: list[POItemOut]
 
 
+class POItemPatch(BaseModel):
+    id: Optional[int] = None          # omit to add a new line; provide to update existing
+    ingredient_id: Optional[int] = None  # required when id is None (new line)
+    qty_ordered: Optional[float] = None
+    unit_price: Optional[float] = None
+
+
+class POUpdate(BaseModel):
+    note: Optional[str] = None
+    items_to_upsert: Optional[list[POItemPatch]] = None  # add or update lines
+    items_to_remove: Optional[list[int]] = None          # existing item IDs to delete
+
+
 class ReceiveItemIn(BaseModel):
     item_id: int
     qty_received: float

@@ -11,6 +11,7 @@ from app.modules.purchasing.models import POStatus, PurchaseOrder, PurchaseOrder
 from app.modules.purchasing.schemas import (
     POCreate,
     POOut,
+    POUpdate,
     ReceivePOIn,
     SupplierCreate,
     SupplierOut,
@@ -56,6 +57,18 @@ def list_suppliers(db: Session = Depends(get_db)):
     return db.query(Supplier).order_by(Supplier.name.asc()).all()
 
 
+@router.get(
+    "/suppliers/{id}",
+    response_model=SupplierOut,
+    dependencies=[Depends(get_current_user)],
+)
+def get_supplier(id: int, db: Session = Depends(get_db)):
+    supplier = db.query(Supplier).filter(Supplier.id == id).first()
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    return supplier
+
+
 @router.patch(
     "/suppliers/{id}",
     response_model=SupplierOut,
@@ -67,6 +80,23 @@ def update_supplier(id: int, payload: SupplierCreate, db: Session = Depends(get_
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(supplier, field, value)
+    db.commit()
+    db.refresh(supplier)
+    return supplier
+
+
+@router.patch(
+    "/suppliers/{id}/deactivate",
+    response_model=SupplierOut,
+    dependencies=[Depends(require_role(UserRole.admin, UserRole.manager))],
+)
+def deactivate_supplier(id: int, db: Session = Depends(get_db)):
+    supplier = db.query(Supplier).filter(Supplier.id == id).first()
+    if not supplier:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found")
+    if not supplier.is_active:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Supplier is already inactive")
+    supplier.is_active = False
     db.commit()
     db.refresh(supplier)
     return supplier
@@ -135,6 +165,88 @@ def list_orders(db: Session = Depends(get_db)):
 )
 def get_order(id: int, db: Session = Depends(get_db)):
     return _get_po_or_404(id, db)
+
+
+@router.patch("/orders/{id}", response_model=POOut)
+def update_order(
+    id: int,
+    payload: POUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.admin, UserRole.manager)),
+):
+    po = _get_po_or_404(id, db)
+    if po.status != POStatus.draft.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Only draft orders can be edited (current status: {po.status})",
+        )
+
+    if payload.note is not None:
+        po.note = payload.note
+
+    item_map = {item.id: item for item in po.items}
+
+    # Remove items
+    for item_id in (payload.items_to_remove or []):
+        if item_id not in item_map:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Item ID {item_id} does not belong to this order",
+            )
+        db.delete(item_map.pop(item_id))
+
+    # Upsert items
+    for patch in (payload.items_to_upsert or []):
+        if patch.id is not None:
+            # Update existing line
+            if patch.id not in item_map:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Item ID {patch.id} does not belong to this order",
+                )
+            line = item_map[patch.id]
+            if patch.qty_ordered is not None:
+                line.qty_ordered = patch.qty_ordered
+            if patch.unit_price is not None:
+                line.unit_price = patch.unit_price
+        else:
+            # Add new line
+            if patch.ingredient_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="ingredient_id is required when adding a new item",
+                )
+            if not db.query(Ingredient).filter(Ingredient.id == patch.ingredient_id, Ingredient.is_active.is_(True)).first():
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Ingredient ID {patch.ingredient_id} not found",
+                )
+            db.add(PurchaseOrderItem(
+                order_id=po.id,
+                ingredient_id=patch.ingredient_id,
+                qty_ordered=patch.qty_ordered or 0,
+                unit_price=patch.unit_price,
+            ))
+
+    db.commit()
+    db.refresh(po)
+    return po
+
+
+@router.delete("/orders/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_order(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.admin, UserRole.manager)),
+):
+    po = _get_po_or_404(id, db)
+    if po.status != POStatus.draft.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Only draft orders can be deleted (current status: {po.status})",
+        )
+    db.delete(po)
+    db.commit()
 
 
 @router.post("/orders/{id}/submit", response_model=POOut)
